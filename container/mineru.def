@@ -1,0 +1,72 @@
+Bootstrap: docker
+From: nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+%labels
+    Author Adam Thomas
+    Version 1.0
+    Description MinerU PDF-to-JSON conversion container for NIH Biowulf
+
+%post
+    # Update and install base dependencies
+    apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 \
+        python3.11-venv \
+        python3-pip \
+        libgl1-mesa-glx \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender-dev \
+        git \
+        wget \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Set python3.11 as default
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+    # Upgrade pip
+    python3 -m pip install --upgrade pip
+
+    # Install MinerU with core dependencies
+    pip3 install --no-cache-dir "mineru[core]"
+
+    # Install additional dependencies
+    pip3 install --no-cache-dir \
+        torch \
+        torchvision \
+        pandas \
+        pyarrow \
+        duckdb
+
+    # Clean up
+    apt-get clean
+    rm -rf /var/cache/apt/archives/*
+
+%environment
+    export LC_ALL=C
+    export LANG=C.UTF-8
+    export PATH=/usr/local/bin:$PATH
+    export CUDA_VISIBLE_DEVICES=0
+
+%runscript
+    exec mineru "$@"
+
+%test
+    python3 -c "import mineru; print(f'MinerU version: {mineru.__version__}')"
+    python3 -c "import torch; print(f'PyTorch CUDA available: {torch.cuda.is_available()}')"
+
+%help
+    MinerU PDF-to-JSON conversion container for NIH Biowulf HPC.
+
+    Usage:
+        # Direct MinerU CLI
+        apptainer run --nv mineru.sif -p input.pdf -o output/
+
+        # Python script
+        apptainer exec --nv mineru.sif python3 process_pdfs_mineru.py --help
+
+    GPU Requirements:
+        - Pipeline backend: 6GB VRAM minimum
+        - VLM backend: 8GB VRAM minimum
+        - Recommended: V100 (16GB) or A100 (80GB)

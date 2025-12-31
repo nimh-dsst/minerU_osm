@@ -1,0 +1,47 @@
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+LABEL maintainer="Adam Thomas"
+LABEL description="MinerU PDF-to-JSON conversion container for NIH Biowulf"
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install base dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    git \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set python3.11 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+# Upgrade pip
+RUN python3 -m pip install --upgrade pip
+
+# Install MinerU with core dependencies
+RUN pip3 install --no-cache-dir "mineru[core]"
+
+# Install additional dependencies
+RUN pip3 install --no-cache-dir \
+    torch \
+    torchvision \
+    pandas \
+    pyarrow \
+    duckdb
+
+# Environment
+ENV LC_ALL=C
+ENV LANG=C.UTF-8
+ENV PATH=/usr/local/bin:$PATH
+
+# Default command
+CMD ["mineru", "--help"]

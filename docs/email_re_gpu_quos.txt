@@ -1,0 +1,7 @@
+The Biowulf priority access for NIMH users is ready. NIMH users that you have authorized can simply add the “gpunimh2025.1” QOS to their batch jobs submitted to the GPU partition, and these jobs will have higher priority, placing them ahead of all non buy-in jobs in the Biowulf job queue, as described in the MOU. The QOS can be specified by adding the following argument to the batch command or script:
+
+--qos=gpunimh2025.1
+
+Note that this argument will only work for batch jobs on Biowulf's gpu partition, not interactive jobs. Interactive jobs already run at a higher priority.  When using this QOS, NIMH users will also have a slightly higher limit on the number of GPUs that they can use (64 as opposed to 56) in addition to the greatly increased priority. We will adjust the limit on the number of GPUs that can be used at high priority simultaneously based on the impact to the system and in coordination with you as described in the MOU.
+
+NIMH users currently have access to 37,440,000 GPU compute units that were funded in FY2025. All jobs submitted with the gpunimh2025.1 QOS will be charged GPU compute units in accordance with the terms of the MOU (see Appendix A of the MOU for the charge rate for each type of GPU). CIT HPC will provide a weekly report showing per-user utilization and the overall used and remaining balances. As of November 17, NIMH has transferred the FY2026 funds specified in the MOU, and we will add the remaining 52 million GPU compute units to the balance within the next 2 weeks.
