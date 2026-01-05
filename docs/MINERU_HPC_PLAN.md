@@ -8,37 +8,59 @@ This document outlines a strategy for processing PubMed Open Access PDFs through
 **Input:** PDFs from datalad-osm (`/data/NIMH_scratch/adamt/osm/datalad-osm/pdfs/`)
 **Output:** Structured JSON files (`/data/NIMH_scratch/adamt/osm/datalad-osm/minerU_out/`)
 
-## Current State (Updated 2024-12-31)
+## Current State (Updated 2025-01-05)
 
 | Metric | Value |
 |--------|-------|
-| PDFs in registry | 163,315 |
+| Total PDFs in registry | 449,975 |
+| Small PDFs (<5MB) | 382,657 |
+| Large PDFs (≥5MB) | 67,318 |
 | Container | Built (6.5 GB) at `/data/adamt/containers/mineru.sif` |
-| Registry | Initialized at `/data/adamt/osm/datafiles/mineru_registry.duckdb` |
-| Test status | Running (Job 8364045, 5 chunks of 100 PDFs) |
+| Registry | `/data/adamt/osm/datafiles/mineru_registry.duckdb` |
+
+### Active Jobs
+
+| Job ID | Description | Status | ETA |
+|--------|-------------|--------|-----|
+| 8644416 | Small PDF swarm (<5MB) | 54% complete (~193K PDFs) | Wed Jan 8 |
 
 ### Implementation Progress
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | 1. Container | **Complete** | Built via Docker on Curium, converted to SIF |
-| 2. Scripts | **Complete** | All 4 scripts implemented and tested |
-| 3. Registry | **Complete** | 163,315 PDFs registered |
-| 4. Test run | **In Progress** | 5-job test swarm running on K80 GPUs |
-| 5. Production | Pending | Awaiting test validation |
+| 2. Scripts | **Complete** | All scripts implemented with subdirectory output |
+| 3. Registry | **Complete** | 449,975 PDFs with file sizes |
+| 4. Small PDF swarm | **In Progress** | Job 8644416, ~358K small PDFs |
+| 5. Large PDF swarm | **Pending** | ~67K PDFs ≥5MB, NIMH QOS |
+| 6. Merge & validate | Pending | After swarms complete |
+
+### Size Distribution
+
+| Size Range | Count | Strategy |
+|------------|-------|----------|
+| <1MB | 116,559 | Small swarm (current) |
+| 1-5MB | 266,098 | Small swarm (current) |
+| 5-10MB | 46,580 | Large swarm (next) |
+| >10MB | 20,738 | Large swarm (next) |
 
 ## Observed Performance Metrics
 
-From test run (Job 8364045) on K80 GPUs:
+From production runs (Jobs 8372761, 8644416):
+
+| GPU Type | Time per PDF | Nodes |
+|----------|--------------|-------|
+| K80 (cn30xx) | ~120-160 sec | Older, always available |
+| A100/V100 (cn2xxx, cn4xxx) | ~12-15 sec | Newer, higher demand |
+
+### Throughput (Job 8644416 - Small PDFs)
 
 | Metric | Value |
 |--------|-------|
-| GPUs used | 5 (K80) |
-| PDFs processed | ~37 in 18 min |
-| Rate (total) | ~2.06 PDFs/min |
-| Rate (per GPU) | ~0.41 PDFs/min |
-| Time per PDF | **~2.5 min** |
-| Chunk time (100 PDFs) | **~4 hours** |
+| Concurrent GPUs | ~56 (QOS limit) |
+| Chunks completed | 4,823 in 67 hours |
+| Throughput | ~72 chunks/hour (~2,880 PDFs/hour) |
+| Average per PDF | Variable (GPU-dependent) |
 
 ### Output Size per PDF
 
@@ -150,18 +172,21 @@ Per GPU allocation MOU (see `docs/email_re_gpu_quos.txt`):
 /data/adamt/containers/mineru.sif     # Built container (6.5 GB)
 
 /data/adamt/osm/datafiles/            # Data files
-├── mineru_registry.duckdb            # Processing tracker
-├── mineru_manifest_scratch.csv       # PDF manifest (163K entries)
-├── mineru_full.swarm                 # Full production swarm
-├── mineru_test.swarm                 # Test swarm (5 chunks)
-├── mineru_results/                   # Per-chunk result CSVs
+├── mineru_registry.duckdb            # Processing tracker (with file sizes)
+├── mineru_manifest_full.csv          # Full manifest (450K PDFs)
+├── mineru_manifest_small.csv         # Small PDFs <5MB (358K)
+├── mineru_manifest_large.csv         # Large PDFs ≥5MB (67K)
+├── mineru_small.swarm                # Small PDF swarm (8,949 chunks)
+├── mineru_large.swarm                # Large PDF swarm (pending)
+├── mineru_results/                   # Old swarm result CSVs
+├── mineru_results_v2/                # Current swarm result CSVs
 └── mineru_logs/                      # Swarm job logs
-    ├── test/                         # Test job logs
-    └── full/                         # Production job logs
+    ├── small/                        # Small PDF swarm logs
+    └── large/                        # Large PDF swarm logs
 
 /data/NIMH_scratch/adamt/osm/datalad-osm/
-├── pdfs/{prefix}/{pmid}.pdf          # Input PDFs
-└── minerU_out/{pmid}/                # Output JSON/MD files
+├── pdfs/{prefix}/{pmid}.pdf          # Input PDFs (organized by first 3 digits)
+└── minerU_out/{prefix}/{pmid}/       # Output JSON/MD files (same structure)
 ```
 
 ## Commands Reference
@@ -292,10 +317,31 @@ cat /data/adamt/osm/datafiles/mineru_logs/test/swarm_JOBID_0.e
 1. ~~Create repository structure~~ **Done**
 2. ~~Write Apptainer container definition~~ **Done**
 3. ~~Implement scripts~~ **Done**
-4. ~~Initialize registry~~ **Done**
-5. ~~Test on 500 PDFs (swarm)~~ **In Progress**
-6. Validate test outputs
-7. Run full production (163K PDFs)
-8. Merge and export results
-9. Update registry with completion status
+4. ~~Initialize registry (450K PDFs)~~ **Done**
+5. ~~Add file size tracking~~ **Done**
+6. ~~Small PDF swarm (<5MB)~~ **In Progress** - Job 8644416
+7. Large PDF swarm (≥5MB) - NIMH QOS, 20 PDFs/chunk
+8. Merge results and update registry
+9. Validate output quality
 10. Transfer outputs to permanent storage
+
+## Local Access via CIFS
+
+Mount HPC filesystems locally using gio (GVFS):
+
+```bash
+# Mount shares
+gio mount smb://hpcdrive.nih.gov/data
+gio mount smb://hpcdrive.nih.gov/adamt
+gio mount smb://hpcdrive.nih.gov/NIMH_scratch
+
+# Symlinks for convenient access (example)
+ln -s "/run/user/$(id -u)/gvfs/smb-share:server=hpcdrive.nih.gov,share=data/" ~/helix_mnt_data
+ln -s "/run/user/$(id -u)/gvfs/smb-share:server=hpcdrive.nih.gov,share=adamt/" ~/helix_mnt_home
+
+# Access files
+ls ~/helix_mnt_data/osm/minerU_osm/
+cat ~/helix_mnt_data/osm/datafiles/mineru_registry.duckdb
+```
+
+See `/home/adamt/claude/osm/docs/HPC_SOPS.md` for full documentation.

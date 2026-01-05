@@ -16,13 +16,36 @@ export PDF_DIR=/data/NIMH_scratch/adamt/osm/datalad-osm/pdfs
 export OUTPUT_DIR=/data/NIMH_scratch/adamt/osm/datalad-osm/minerU_out
 ```
 
+## Local Access via CIFS (gio mount)
+
+Access HPC filesystems locally via symlinks:
+
+```bash
+~/helix_mnt_data/         -> /data/adamt/ on HPC
+~/helix_mnt_home/         -> /home/adamt/ on HPC
+~/helix_mnt_nimh_scratch/ -> /data/NIMH_scratch/ on HPC
+```
+
+Example paths:
+- `~/helix_mnt_data/osm/minerU_osm/` - This repository on HPC
+- `~/helix_mnt_data/osm/datafiles/` - Registry, manifests, results
+- `~/helix_mnt_nimh_scratch/adamt/osm/datalad-osm/` - PDFs and outputs
+
+See `~/claude/osm/docs/HPC_SOPS.md` for mount setup instructions.
+
 ## Key Files
 
 - **Container:** `/data/adamt/containers/mineru.sif` (6.5 GB)
-- **Registry:** `/data/adamt/osm/datafiles/mineru_registry.duckdb`
-- **Manifest:** `/data/adamt/osm/datafiles/mineru_manifest_scratch.csv` (163K PDFs)
-- **Swarm:** `/data/adamt/osm/datafiles/mineru_full.swarm`
-- **Logs:** `/data/adamt/osm/datafiles/mineru_logs/`
+- **Registry:** `/data/adamt/osm/datafiles/mineru_registry.duckdb` (450K PDFs with file sizes)
+- **Manifests:**
+  - `mineru_manifest_full.csv` - All 450K PDFs
+  - `mineru_manifest_small.csv` - PDFs <5MB (358K)
+  - `mineru_manifest_large.csv` - PDFs ≥5MB (67K)
+- **Swarms:**
+  - `mineru_small.swarm` - Small PDFs, 40/chunk
+  - `mineru_large.swarm` - Large PDFs, 20/chunk, NIMH QOS
+- **Results:** `mineru_results_v2/` - Per-chunk CSVs
+- **Logs:** `mineru_logs/{small,large}/`
 
 ## Key Scripts
 
@@ -53,18 +76,18 @@ bash scripts/generate_mineru_swarm.sh \
 ## HPC Submission
 
 ```bash
-# Test (5 chunks = 500 PDFs)
-head -5 /data/adamt/osm/datafiles/mineru_full.swarm > /data/adamt/osm/datafiles/mineru_test.swarm
-swarm -f /data/adamt/osm/datafiles/mineru_test.swarm \
+# Small PDFs (<5MB) - 40 PDFs/chunk, 2hr limit, standard priority
+swarm -f /data/adamt/osm/datafiles/mineru_small.swarm \
     -g 64 -t 16 --time 02:00:00 \
     --partition gpu --gres=gpu:1 \
-    --logdir /data/adamt/osm/datafiles/mineru_logs/test
+    --logdir /data/adamt/osm/datafiles/mineru_logs/small
 
-# Full production (1,634 chunks)
-swarm -f /data/adamt/osm/datafiles/mineru_full.swarm \
-    -g 64 -t 16 --time 06:00:00 \
+# Large PDFs (≥5MB) - 20 PDFs/chunk, 4hr limit, NIMH priority
+swarm -f /data/adamt/osm/datafiles/mineru_large.swarm \
+    -g 64 -t 16 --time 04:00:00 \
     --partition gpu --gres=gpu:1 \
-    --logdir /data/adamt/osm/datafiles/mineru_logs/full
+    --qos=gpunimh2025.1 \
+    --logdir /data/adamt/osm/datafiles/mineru_logs/large
 ```
 
 ## GPU Requirements

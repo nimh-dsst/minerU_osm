@@ -57,6 +57,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection):
             status VARCHAR DEFAULT 'pending',
             error_msg VARCHAR,
             processing_time FLOAT,
+            file_size BIGINT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -66,6 +67,12 @@ def init_schema(conn: duckdb.DuckDBPyConnection):
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_status ON mineru_status(status)
     """)
+
+    # Add file_size column if it doesn't exist (for existing databases)
+    try:
+        conn.execute("ALTER TABLE mineru_status ADD COLUMN file_size BIGINT")
+    except duckdb.CatalogException:
+        pass  # Column already exists
 
 
 def cmd_init(args):
@@ -446,6 +453,143 @@ def cmd_query(args):
     return 0
 
 
+def cmd_update_sizes(args):
+    """Update file sizes for all PDFs in registry."""
+    import os
+
+    db_path = Path(args.db)
+
+    if not db_path.exists():
+        print(f"Error: Registry not found: {db_path}")
+        return 1
+
+    conn = get_db(db_path)
+    init_schema(conn)  # Ensure file_size column exists
+
+    # Get all entries without file_size
+    entries = conn.execute("""
+        SELECT pmid, pdf_path
+        FROM mineru_status
+        WHERE file_size IS NULL
+    """).fetchall()
+
+    print(f"Updating file sizes for {len(entries)} PDFs...")
+
+    updated = 0
+    missing = 0
+    batch_size = 10000
+    batch = []
+
+    for pmid, pdf_path in entries:
+        try:
+            size = os.path.getsize(pdf_path)
+            batch.append((size, pmid))
+            updated += 1
+        except (OSError, FileNotFoundError):
+            missing += 1
+
+        # Batch updates for performance
+        if len(batch) >= batch_size:
+            conn.executemany("""
+                UPDATE mineru_status SET file_size = ? WHERE pmid = ?
+            """, batch)
+            conn.commit()
+            print(f"  Updated {updated} / {len(entries)}...")
+            batch = []
+
+    # Final batch
+    if batch:
+        conn.executemany("""
+            UPDATE mineru_status SET file_size = ? WHERE pmid = ?
+        """, batch)
+        conn.commit()
+
+    print(f"Updated {updated} file sizes ({missing} files not found)")
+
+    # Show size distribution
+    dist = conn.execute("""
+        SELECT
+            CASE
+                WHEN file_size < 1048576 THEN '<1MB'
+                WHEN file_size < 5242880 THEN '1-5MB'
+                WHEN file_size < 10485760 THEN '5-10MB'
+                ELSE '>10MB'
+            END as size_range,
+            COUNT(*) as count
+        FROM mineru_status
+        WHERE file_size IS NOT NULL
+        GROUP BY 1
+        ORDER BY MIN(file_size)
+    """).fetchall()
+
+    print("\nSize distribution:")
+    for range_name, count in dist:
+        print(f"  {range_name}: {count:,}")
+
+    conn.close()
+    return 0
+
+
+def cmd_export_by_size(args):
+    """Export PDFs filtered by file size to a manifest."""
+    db_path = Path(args.db)
+    output_path = Path(args.output)
+
+    if not db_path.exists():
+        print(f"Error: Registry not found: {db_path}")
+        return 1
+
+    conn = get_db(db_path)
+
+    # Build size filter
+    conditions = ["status = 'pending' OR status = 'failed'"]
+    params = []
+
+    if args.max_size:
+        max_bytes = int(args.max_size * 1024 * 1024)  # Convert MB to bytes
+        conditions.append("file_size <= ?")
+        params.append(max_bytes)
+
+    if args.min_size:
+        min_bytes = int(args.min_size * 1024 * 1024)
+        conditions.append("file_size >= ?")
+        params.append(min_bytes)
+
+    where_clause = " AND ".join(conditions)
+
+    # Get filtered entries
+    query = f"""
+        SELECT pmid, pdf_path
+        FROM mineru_status
+        WHERE {where_clause} AND file_size IS NOT NULL
+        ORDER BY pmid
+    """
+
+    entries = conn.execute(query, params).fetchall()
+
+    if not entries:
+        print("No matching PDFs to export")
+        return 0
+
+    # Write to CSV
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["pmid", "pdf_path"])
+        writer.writerows(entries)
+
+    size_desc = []
+    if args.min_size:
+        size_desc.append(f">={args.min_size}MB")
+    if args.max_size:
+        size_desc.append(f"<={args.max_size}MB")
+    size_str = " and ".join(size_desc) if size_desc else "all sizes"
+
+    print(f"Exported {len(entries)} PDFs ({size_str}) to: {output_path}")
+
+    conn.close()
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="MinerU processing registry",
@@ -528,6 +672,33 @@ def main():
     query_parser = subparsers.add_parser("query", help="Run SQL query")
     query_parser.add_argument("sql", help="SQL query to execute")
 
+    # update-sizes
+    update_sizes_parser = subparsers.add_parser(
+        "update-sizes",
+        help="Update file sizes for all PDFs",
+    )
+
+    # export-by-size
+    export_size_parser = subparsers.add_parser(
+        "export-by-size",
+        help="Export PDFs filtered by file size",
+    )
+    export_size_parser.add_argument(
+        "-o", "--output",
+        required=True,
+        help="Output CSV file",
+    )
+    export_size_parser.add_argument(
+        "--max-size",
+        type=float,
+        help="Maximum file size in MB",
+    )
+    export_size_parser.add_argument(
+        "--min-size",
+        type=float,
+        help="Minimum file size in MB",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -543,6 +714,8 @@ def main():
         "retry-failed": cmd_retry_failed,
         "scan-outputs": cmd_scan_outputs,
         "query": cmd_query,
+        "update-sizes": cmd_update_sizes,
+        "export-by-size": cmd_export_by_size,
     }
 
     return commands[args.command](args)

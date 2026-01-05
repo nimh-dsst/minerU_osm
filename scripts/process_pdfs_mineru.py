@@ -158,10 +158,23 @@ def discover_pdfs(pdf_dir: Path) -> list[dict]:
     return entries
 
 
+def get_pmid_prefix(pmid: str) -> str:
+    """Get the first 3 digits of a PMID for subdirectory organization."""
+    # Handle PMIDs that might be numeric strings
+    pmid_str = str(pmid).strip()
+    return pmid_str[:3] if len(pmid_str) >= 3 else pmid_str
+
+
 def check_existing_output(pmid: str, output_dir: Path) -> bool:
     """Check if output files already exist for a PMID."""
-    json_path = output_dir / f"{pmid}" / f"{pmid}_content_list.json"
-    return json_path.exists()
+    prefix = get_pmid_prefix(pmid)
+    # Check in subdirectory structure: {prefix}/{pmid}/{pmid}/auto/{pmid}_content_list.json
+    json_path = output_dir / prefix / pmid / pmid / "auto" / f"{pmid}_content_list.json"
+    if json_path.exists():
+        return True
+    # Also check old flat structure for backwards compatibility
+    old_json_path = output_dir / pmid / pmid / "auto" / f"{pmid}_content_list.json"
+    return old_json_path.exists()
 
 
 def process_single_pdf(
@@ -196,8 +209,9 @@ def process_single_pdf(
     start_time = time.time()
 
     try:
-        # Create output directory for this PMID
-        pmid_output_dir = output_dir / pmid
+        # Create output directory for this PMID with subdirectory structure
+        prefix = get_pmid_prefix(pmid)
+        pmid_output_dir = output_dir / prefix / pmid
         pmid_output_dir.mkdir(parents=True, exist_ok=True)
 
         if verbose:
