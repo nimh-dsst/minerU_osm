@@ -20,19 +20,20 @@ This document outlines a strategy for processing PubMed Open Access PDFs through
 
 ### Active Jobs
 
-| Job ID | Description | Status | ETA |
-|--------|-------------|--------|-----|
-| 8644416 | Small PDF swarm (<5MB) | 54% complete (~193K PDFs) | Wed Jan 8 |
+| Job ID | Description | Chunks | QOS | Status |
+|--------|-------------|--------|-----|--------|
+| 8644416 | Small PDFs (<5MB) | 8,949 | global | ~54% complete |
+| 8787036 | Large PDFs (≥5MB, sorted desc) | 3,366 | gpunimh2025 | Running |
 
 ### Implementation Progress
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | 1. Container | **Complete** | Built via Docker on Curium, converted to SIF |
-| 2. Scripts | **Complete** | All scripts implemented with subdirectory output |
+| 2. Scripts | **Complete** | All scripts + gpustat.sh monitoring |
 | 3. Registry | **Complete** | 449,975 PDFs with file sizes |
-| 4. Small PDF swarm | **In Progress** | Job 8644416, ~358K small PDFs |
-| 5. Large PDF swarm | **Pending** | ~67K PDFs ≥5MB, NIMH QOS |
+| 4. Small PDF swarm | **In Progress** | Job 8644416, ~358K PDFs, global QOS |
+| 5. Large PDF swarm | **In Progress** | Job 8787036, ~67K PDFs, NIMH QOS, sorted by size |
 | 6. Merge & validate | Pending | After swarms complete |
 
 ### Size Distribution

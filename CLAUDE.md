@@ -113,4 +113,24 @@ MinerU produces per-PDF (in `{OUTPUT_DIR}/{pmid}/{pmid}/auto/`):
 squeue -u $USER                    # Check job status
 ls $OUTPUT_DIR | wc -l             # Count processed PDFs
 tail -f $LOG_DIR/test/swarm_*.o    # Watch output logs
+
+# GPU utilization across all running jobs
+bash /data/adamt/osm/minerU_osm/scripts/gpustat.sh
+
+# CPU/memory for specific job
+jobload -j JOBID
 ```
+
+## Active Jobs (as of 2025-01-05)
+
+| Job ID | Description | Chunks | QOS | Status |
+|--------|-------------|--------|-----|--------|
+| 8644416 | Small PDFs (<5MB) | 8,949 | global | ~54% complete |
+| 8787036 | Large PDFs (≥5MB, sorted by size) | 3,366 | gpunimh2025 | Running |
+
+## Performance Notes
+
+- **K80:** ~120-160 sec/PDF
+- **P100:** ~60 sec/PDF
+- **A100/V100:** ~12-15 sec/PDF (10x faster than K80)
+- **NIMH QOS:** Separate GPU quota from standard 56-GPU limit
