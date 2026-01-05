@@ -542,7 +542,7 @@ def cmd_export_by_size(args):
     conn = get_db(db_path)
 
     # Build size filter
-    conditions = ["status = 'pending' OR status = 'failed'"]
+    conditions = ["(status = 'pending' OR status = 'failed')"]
     params = []
 
     if args.max_size:
