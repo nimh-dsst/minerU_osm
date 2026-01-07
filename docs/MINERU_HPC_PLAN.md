@@ -8,7 +8,7 @@ This document outlines a strategy for processing PubMed Open Access PDFs through
 **Input:** PDFs from datalad-osm (`/data/NIMH_scratch/adamt/osm/datalad-osm/pdfs/`)
 **Output:** Structured JSON files (`/data/NIMH_scratch/adamt/osm/datalad-osm/minerU_out/`)
 
-## Current State (Updated 2025-01-05)
+## Current State (Updated 2025-01-06)
 
 | Metric | Value |
 |--------|-------|
@@ -18,23 +18,36 @@ This document outlines a strategy for processing PubMed Open Access PDFs through
 | Container | Built (6.5 GB) at `/data/adamt/containers/mineru.sif` |
 | Registry | `/data/adamt/osm/datafiles/mineru_registry.duckdb` |
 
-### Active Jobs
+### Processing Results (Before Cancellation)
+
+| Metric | Value |
+|--------|-------|
+| Result CSVs: "completed" | 253,443 |
+| Actual output directories | 134,688 |
+| Silent failures (no output) | ~172,631 |
+| Explicit failures (timeout) | 769 |
+
+**Critical Issue:** MinerU silently fails on ~47% of PDFs. See `TROUBLESHOOTING_SILENT_FAILURES.md`.
+
+### Job Status
 
 | Job ID | Description | Chunks | QOS | Status |
 |--------|-------------|--------|-----|--------|
-| 8644416 | Small PDFs (<5MB) | 8,949 | global | ~54% complete |
-| 8787036 | Large PDFs (≥5MB, sorted desc) | 3,366 | gpunimh2025 | Running |
+| 8644416 | Small PDFs (<5MB) | 8,949 | global | Cancelled (6 still running) |
+| 8787036 | Large PDFs (≥5MB) | 3,366 | gpunimh2025 | Cancelled |
 
 ### Implementation Progress
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | 1. Container | **Complete** | Built via Docker on Curium, converted to SIF |
-| 2. Scripts | **Complete** | All scripts + gpustat.sh monitoring |
+| 2. Scripts | **Complete** | Fixed 2025-01-06: output verification, directory structure |
 | 3. Registry | **Complete** | 449,975 PDFs with file sizes |
-| 4. Small PDF swarm | **In Progress** | Job 8644416, ~358K PDFs, global QOS |
-| 5. Large PDF swarm | **In Progress** | Job 8787036, ~67K PDFs, NIMH QOS, sorted by size |
-| 6. Merge & validate | Pending | After swarms complete |
+| 4. Small PDF swarm | **Cancelled** | Job 8644416, discovered silent failure issue |
+| 5. Large PDF swarm | **Cancelled** | Job 8787036, pending failure investigation |
+| 6. Output cleanup | **Complete** | Removed empty dirs, flattened structure |
+| 7. Silent failure analysis | **In Progress** | ~47% failure rate discovered |
+| 8. Re-run with fixed script | Pending | After root cause identified |
 
 ### Size Distribution
 
@@ -320,11 +333,17 @@ cat /data/adamt/osm/datafiles/mineru_logs/test/swarm_JOBID_0.e
 3. ~~Implement scripts~~ **Done**
 4. ~~Initialize registry (450K PDFs)~~ **Done**
 5. ~~Add file size tracking~~ **Done**
-6. ~~Small PDF swarm (<5MB)~~ **In Progress** - Job 8644416
-7. Large PDF swarm (≥5MB) - NIMH QOS, 20 PDFs/chunk
-8. Merge results and update registry
-9. Validate output quality
-10. Transfer outputs to permanent storage
+6. ~~Small PDF swarm (<5MB)~~ **Cancelled** - Silent failure issue discovered
+7. ~~Large PDF swarm (≥5MB)~~ **Cancelled** - Pending investigation
+8. ~~Fix process_pdfs_mineru.py bugs~~ **Done** - Output verification, directory structure
+9. **Investigate silent failures** - See TROUBLESHOOTING_SILENT_FAILURES.md
+   - Analyze GPU type correlation
+   - Enable MinerU debug logging
+   - Test on specific failing PDFs
+10. Re-run with fixed script after root cause identified
+11. Merge results and update registry
+12. Validate output quality
+13. Transfer outputs to permanent storage
 
 ## Local Access via CIFS
 

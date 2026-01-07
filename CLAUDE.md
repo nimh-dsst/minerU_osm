@@ -33,6 +33,33 @@ Example paths:
 
 See `~/claude/osm/docs/HPC_SOPS.md` for mount setup instructions.
 
+## Current Status (2025-01-06)
+
+### Processing Results (Before Cancellation)
+
+| Metric | Value |
+|--------|-------|
+| Result CSVs: "completed" | 253,443 |
+| Actual output directories | 134,688 |
+| Silent failures (no output) | ~172K |
+| Explicit failures (timeout) | 769 |
+
+**Jobs cancelled** to investigate silent failure issue. Job 8644416 has 6 tasks still running.
+
+**Issue discovered:** MinerU silently fails on ~47% of PDFs without raising exceptions. See `docs/TROUBLESHOOTING_SILENT_FAILURES.md`.
+
+### Output Structure
+
+After cleanup, outputs are organized as:
+```
+minerU_out/{prefix}/{pmid}/auto/
+├── {pmid}_content_list.json
+├── {pmid}_middle.json
+├── {pmid}.md
+├── {pmid}_model.json
+└── images/
+```
+
 ## Key Files
 
 - **Container:** `/data/adamt/containers/mineru.sif` (6.5 GB)
@@ -41,24 +68,16 @@ See `~/claude/osm/docs/HPC_SOPS.md` for mount setup instructions.
   - `mineru_manifest_full.csv` - All 450K PDFs
   - `mineru_manifest_small.csv` - PDFs <5MB (358K)
   - `mineru_manifest_large.csv` - PDFs ≥5MB (67K)
-- **Swarms:**
-  - `mineru_small.swarm` - Small PDFs, 40/chunk
-  - `mineru_large.swarm` - Large PDFs, 20/chunk, NIMH QOS
-- **Results:** `mineru_results_v2/` - Per-chunk CSVs
+- **Results:** `mineru_results_v2/`, `mineru_results_large/` - Per-chunk CSVs
 - **Logs:** `mineru_logs/{small,large}/`
 
 ## Key Scripts
 
-### Swarm Generation
+### Processing Script (Fixed 2025-01-06)
 
-```bash
-cd /data/adamt/osm/minerU_osm
-bash scripts/generate_mineru_swarm.sh \
-    --manifest /data/adamt/osm/datafiles/mineru_manifest_scratch.csv \
-    --chunk-size 100 \
-    --output-dir /data/NIMH_scratch/adamt/osm/datalad-osm/minerU_out \
-    --output-swarm /data/adamt/osm/datafiles/mineru_full.swarm
-```
+`scripts/process_pdfs_mineru.py` - Fixed two bugs:
+1. **False "completed" status:** Now verifies output files exist before marking success
+2. **Double-nested directories:** Now outputs to `{prefix}/{pmid}/auto/` (not `{prefix}/{pmid}/{pmid}/auto/`)
 
 ### Registry
 
@@ -96,17 +115,6 @@ swarm -f /data/adamt/osm/datafiles/mineru_large.swarm \
 - **Processing time:** ~2.5 min/PDF on K80, faster on A100/V100
 - **NIMH QOS:** `--qos=gpunimh2025.1` is optional; K80s have low demand
 
-## Output Format
-
-MinerU produces per-PDF (in `{OUTPUT_DIR}/{pmid}/{pmid}/auto/`):
-- `{pmid}_content_list.json` - Structured elements (~140 KB)
-- `{pmid}_middle.json` - Intermediate representation (~2.2 MB)
-- `{pmid}.md` - Clean markdown (~75 KB)
-- `{pmid}_model.json` - Model output (~600 KB)
-- `images/` - Extracted images
-
-**Total per PDF:** ~10 MB
-
 ## Monitoring
 
 ```bash
@@ -121,16 +129,17 @@ bash /data/adamt/osm/minerU_osm/scripts/gpustat.sh
 jobload -j JOBID
 ```
 
-## Active Jobs (as of 2025-01-05)
-
-| Job ID | Description | Chunks | QOS | Status |
-|--------|-------------|--------|-----|--------|
-| 8644416 | Small PDFs (<5MB) | 8,949 | global | ~54% complete |
-| 8787036 | Large PDFs (≥5MB, sorted by size) | 3,366 | gpunimh2025 | Running |
-
 ## Performance Notes
 
-- **K80:** ~120-160 sec/PDF
+- **K80:** ~120-160 sec/PDF (actual processing)
 - **P100:** ~60 sec/PDF
 - **A100/V100:** ~12-15 sec/PDF (10x faster than K80)
+- **Silent failure indicator:** Processing time <50 sec suggests no actual processing occurred
 - **NIMH QOS:** Separate GPU quota from standard 56-GPU limit
+
+## Known Issues
+
+See `docs/TROUBLESHOOTING_SILENT_FAILURES.md` for details on:
+- MinerU silent failures (~47% of PDFs)
+- Processing time correlation with success
+- Potential GPU-type correlation (to investigate)
