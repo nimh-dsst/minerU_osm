@@ -63,69 +63,72 @@ Script now removes empty output directories on failure to prevent inode waste.
 **Before:** `{prefix}/{pmid}/{pmid}/auto/`
 **After:** `{prefix}/{pmid}/auto/`
 
-## Root Cause: GPU Type Incompatibility (Preliminary Analysis)
+## Root Cause: P100 GPU Incompatibility (Confirmed)
 
 **Analysis Date:** 2025-01-07
 
-Initial GPU correlation analysis from available logs (642 chunks with node info) shows significant correlation between node prefix and failure rate.
+### GPU Compatibility Test Results
 
-### GPU Failure Rate Analysis (From Available Logs)
+All 5 GPU types were tested with `scripts/test_gpu_compatibility.sh`:
 
-| Node Prefix | GPU Type (TBD) | Chunks | Completed | Actual Output | Silent Fail | Fail Rate | Avg Time |
-|-------------|----------------|--------|-----------|---------------|-------------|-----------|----------|
-| cn23xx | Needs verification | 393 | 10,553 | 0 | 10,553 | **100.0%** | **13.7s** |
-| cn30xx | Needs verification | 141 | 3,667 | 3,658 | 9 | 0.2% | 203.5s |
-| cn41xx | Needs verification | 16 | 458 | 458 | 0 | 0.0% | 190.8s |
-| cn42xx | Needs verification | 37 | 1,062 | 1,060 | 2 | 0.2% | 191.2s |
-| cn44xx | Needs verification | 12 | 228 | 225 | 3 | 1.3% | 38.5s |
-| cn07xx | Needs verification | 5 | 66 | 65 | 1 | 1.5% | 57.2s |
-| cn08xx | Needs verification | 30 | 599 | 595 | 4 | 0.7% | 47.3s |
+| GPU Type | Compute Cap | CUDA Available | MinerU Works | Processing Time | Notes |
+|----------|-------------|----------------|--------------|-----------------|-------|
+| K80 | 3.7 | No | **YES** | ~3.5 min | CPU fallback mode |
+| P100 | 6.0 | No (unsupported) | **NO** | ~30s | Silent failure |
+| V100 | 7.0 | Yes | **YES** | ~1 min | GPU mode |
+| V100x | 7.0 | Yes | **YES** | ~1 min | GPU mode |
+| A100 | 8.0 | Yes | **YES** | ~51s | GPU mode |
 
-**Key Findings:**
-- **cn23xx nodes:** 100% failure rate, 13.7s avg time (container startup only)
-- **cn30xx, cn4xxx nodes:** ~0.2% failure rate, 190-200s avg time (actual processing)
-- Processing time <50s is a reliable indicator of silent failure
+### Root Cause
 
-### Testing Required
+The container's PyTorch 2.9.1+cu128 only supports compute capability 7.0+:
 
-**Before making conclusions, test all 5 GPU types available on Biowulf:**
-
-```bash
-# Run GPU compatibility tests (see scripts/test_gpu_compatibility.sh)
-for gpu in k80 p100 v100 v100x a100; do
-    sinteractive --gres=gpu:${gpu}:1 --mem=64g --time=00:30:00
-    # Run test_gpu_compatibility.sh
-done
+```
+Tesla P100-PCIE-16GB with CUDA capability sm_60 is not compatible with the current PyTorch installation.
+The current PyTorch install supports CUDA capabilities sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120.
 ```
 
-### Working Hypothesis
+- **P100 (compute cap 6.0):** CUDA initialization fails silently, MinerU returns without processing
+- **K80 (compute cap 3.7):** CUDA unavailable, but MinerU falls back to CPU mode and works
+- **V100/V100x/A100 (compute cap 7.0+):** Full GPU acceleration works
 
-MinerU's container may be incompatible with certain GPU architectures. The container was built with specific CUDA libraries that may not support all GPU compute capabilities:
-- K80: compute capability 3.7
-- P100: compute capability 6.0
-- V100/V100x: compute capability 7.0
-- A100: compute capability 8.0
+### Node Prefix Correlation (Original Analysis)
 
-**Evidence:**
-- cn23xx nodes show 100% failure with fast times (container startup only)
-- cn30xx/cn4xxx nodes show high success with longer times (actual processing)
-- No CUDA errors in stderr (silent failure)
+| Node Prefix | GPU Type | Chunks | Completed | Actual Output | Silent Fail | Fail Rate | Avg Time |
+|-------------|----------|--------|-----------|---------------|-------------|-----------|----------|
+| cn23xx | **P100** | 393 | 10,553 | 0 | 10,553 | **100.0%** | **13.7s** |
+| cn30xx | K80 | 141 | 3,667 | 3,658 | 9 | 0.2% | 203.5s |
+| cn41xx | K80 | 16 | 458 | 458 | 0 | 0.0% | 190.8s |
+| cn42xx | K80 | 37 | 1,062 | 1,060 | 2 | 0.2% | 191.2s |
+
+**Key Insight:** The cn23xx nodes that showed 100% failure are P100 nodes.
 
 ### Recommended Actions
 
-1. **Test all GPU types** before re-running failed PDFs:
+1. **Re-run failed PDFs on working GPU types only:**
    ```bash
-   bash /data/adamt/osm/minerU_osm/scripts/test_gpu_compatibility.sh
-   ```
-
-2. **After testing, re-run on working GPU types only:**
-   ```bash
+   # Use V100 for speed (recommended)
    swarm -f mineru_retry.swarm \
-       --partition gpu --gres=gpu:TYPE:1 \
-       ...
+       --partition gpu --gres=gpu:v100:1 \
+       -g 64 -t 16 --time 04:00:00 \
+       --logdir /data/adamt/osm/datafiles/mineru_logs/retry_$(date +%Y%m%d_%H%M%S)
+
+   # Or K80 for availability (slower but works via CPU fallback)
+   swarm -f mineru_retry.swarm \
+       --partition gpu --gres=gpu:k80:1 \
+       -g 64 -t 16 --time 08:00:00 \
+       --logdir /data/adamt/osm/datafiles/mineru_logs/retry_$(date +%Y%m%d_%H%M%S)
    ```
 
-3. **If A100 confirmed as problematic:** Consider rebuilding container with CUDA 11.x+ for compute capability 8.0 support.
+2. **DO NOT use P100:**
+   ```bash
+   # This will silently fail:
+   # --gres=gpu:p100:1  # BROKEN - compute cap 6.0 unsupported
+   ```
+
+3. **Optional: Rebuild container for P100 support** if P100 availability is needed:
+   - Use PyTorch with CUDA 11.x that supports compute capability 6.0+
+   - Current container uses PyTorch 2.9.1+cu128 which dropped sm_60 support
 
 ## Original Root Cause Hypotheses
 
@@ -235,8 +238,8 @@ Create a diagnostic swarm that:
 ## Next Steps
 
 1. [x] Analyze GPU type correlation with failure rate - **DONE: cn23xx = 100% failure, cn30xx/cn4xxx = ~0.2% failure**
-2. [ ] **Test all 5 GPU types** (k80, p100, v100, v100x, a100) with test_gpu_compatibility.sh
-3. [ ] Identify which GPU types work and which fail
-4. [ ] Re-run failed PDFs on working GPU types only
-5. [ ] Consider rebuilding container with broader CUDA support if needed
+2. [x] **Test all 5 GPU types** (k80, p100, v100, v100x, a100) with test_gpu_compatibility.sh - **DONE 2025-01-07**
+3. [x] Identify which GPU types work and which fail - **DONE: P100 fails, K80/V100/V100x/A100 work**
+4. [ ] Re-run failed PDFs on working GPU types only (exclude P100)
+5. [ ] Consider rebuilding container with CUDA 11.x for P100 support if needed
 6. [ ] Report issue to MinerU GitHub with GPU compatibility findings

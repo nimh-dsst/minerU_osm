@@ -23,7 +23,7 @@ echo ""
 
 # Capture GPU info
 echo "=== GPU Information ==="
-nvidia-smi --query-gpu=name,memory.total,compute_cap,driver_version --format=csv 2>&1 | tee "$OUTPUT_DIR/gpu_info.txt"
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv 2>&1 | tee "$OUTPUT_DIR/gpu_info.txt"
 echo ""
 
 # Capture node info
@@ -37,77 +37,42 @@ echo "=== Loading Apptainer ==="
 module load apptainer
 source /usr/local/current/singularity/app_conf/sing_binds
 
-# Test MinerU
-echo "=== Testing MinerU ==="
+# Check CUDA availability inside container
+echo "=== Checking CUDA inside container ==="
+apptainer exec --nv "$CONTAINER" python3 -c "
+import torch
+print(f'PyTorch version: {torch.__version__}')
+print(f'CUDA available: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    print(f'CUDA device: {torch.cuda.get_device_name(0)}')
+    print(f'CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
+else:
+    print('WARNING: CUDA not available')
+" 2>&1 | tee "$OUTPUT_DIR/cuda_check.txt"
+echo ""
+
+# Test MinerU by running the actual processing script
+echo "=== Testing MinerU Processing ==="
 echo "Test PDF: $TEST_PDF"
 echo ""
 
 START_TIME=$(date +%s.%N)
 
-# Run MinerU with verbose output
-apptainer exec --nv "$CONTAINER" python3 - << 'PYTHON_SCRIPT' 2>&1 | tee "$OUTPUT_DIR/mineru_output.txt"
-import sys
-import time
-import os
+# Create a simple manifest
+MANIFEST="$OUTPUT_DIR/test_manifest.csv"
+echo "pmid,pdf_path" > "$MANIFEST"
+echo "12657658,$TEST_PDF" >> "$MANIFEST"
 
-# Enable verbose logging
-import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Run the actual processing script inside the container
+echo "Running process_pdfs_mineru.py..."
+apptainer exec --nv "$CONTAINER" python3 \
+    /data/adamt/osm/minerU_osm/scripts/process_pdfs_mineru.py \
+    --manifest "$MANIFEST" \
+    --output-dir "$OUTPUT_DIR" \
+    --results-file "$OUTPUT_DIR/test_result.csv" \
+    --verbose 2>&1 | tee "$OUTPUT_DIR/mineru_output.txt"
 
-# Check CUDA availability
-try:
-    import torch
-    print(f"PyTorch version: {torch.__version__}")
-    print(f"CUDA available: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        print(f"CUDA device: {torch.cuda.get_device_name(0)}")
-        print(f"CUDA compute capability: {torch.cuda.get_device_capability(0)}")
-        print(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-except Exception as e:
-    print(f"PyTorch/CUDA check failed: {e}")
-
-print()
-
-# Test MinerU
-from mineru.pdf_extractor import PDFExtractor
-import tempfile
-
-test_pdf = os.environ.get('TEST_PDF', '/data/NIMH_scratch/adamt/osm/datalad-osm/pdfs/126/12657658.pdf')
-output_dir = os.environ.get('OUTPUT_DIR', '/tmp/mineru_test')
-
-print(f"Processing: {test_pdf}")
-print(f"Output to: {output_dir}")
-
-start = time.time()
-try:
-    extractor = PDFExtractor(
-        pdf_path=test_pdf,
-        output_dir=output_dir
-    )
-    extractor.extract()
-    elapsed = time.time() - start
-    print(f"\nProcessing completed in {elapsed:.1f} seconds")
-
-    # Check for output files
-    output_files = []
-    for root, dirs, files in os.walk(output_dir):
-        for f in files:
-            output_files.append(os.path.join(root, f))
-
-    if output_files:
-        print(f"\nOutput files generated: {len(output_files)}")
-        for f in output_files[:10]:
-            print(f"  {f}")
-        print("\nSUCCESS: MinerU produced output")
-    else:
-        print("\nFAILURE: No output files generated")
-
-except Exception as e:
-    elapsed = time.time() - start
-    print(f"\nERROR after {elapsed:.1f} seconds: {e}")
-    import traceback
-    traceback.print_exc()
-PYTHON_SCRIPT
+PROCESS_EXIT_CODE=${PIPESTATUS[0]}
 
 END_TIME=$(date +%s.%N)
 ELAPSED=$(echo "$END_TIME - $START_TIME" | bc)
@@ -115,13 +80,19 @@ ELAPSED=$(echo "$END_TIME - $START_TIME" | bc)
 echo ""
 echo "=== Test Summary ==="
 echo "Total elapsed time: ${ELAPSED}s"
+echo "Process exit code: $PROCESS_EXIT_CODE"
 echo "Results saved to: $OUTPUT_DIR"
 
 # Check if output was generated
-if ls "$OUTPUT_DIR"/*_content_list.json 2>/dev/null || ls "$OUTPUT_DIR"/*/*_content_list.json 2>/dev/null; then
-    echo "STATUS: SUCCESS"
+echo ""
+echo "=== Checking for output files ==="
+if find "$OUTPUT_DIR" -name "*_content_list.json" -type f 2>/dev/null | head -1 | grep -q .; then
+    echo "STATUS: SUCCESS - Output files generated"
+    find "$OUTPUT_DIR" -name "*.json" -o -name "*.md" 2>/dev/null | head -10
     exit 0
 else
-    echo "STATUS: FAILURE (no output files)"
+    echo "STATUS: FAILURE - No output files generated"
+    echo ""
+    echo "Check $OUTPUT_DIR/mineru_output.txt for details"
     exit 1
 fi

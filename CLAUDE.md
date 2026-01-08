@@ -44,9 +44,11 @@ See `~/claude/osm/docs/HPC_SOPS.md` for mount setup instructions.
 | Silent failures (no output) | ~122K |
 | Explicit failures (timeout) | 769 |
 
-**Preliminary finding:** Silent failures strongly correlate with cn23xx nodes (100% failure, 13.7s avg). cn30xx/cn4xxx nodes work correctly (~0.2% failure, 190s avg). Need to verify GPU type mapping. See `docs/TROUBLESHOOTING_SILENT_FAILURES.md`.
+**Root cause (confirmed 2025-01-07):** P100 GPUs silently fail because container's PyTorch 2.9.1+cu128 only supports compute capability 7.0+. P100 (compute cap 6.0) is incompatible. See `docs/TROUBLESHOOTING_SILENT_FAILURES.md`.
 
-**Next step:** Test all 5 GPU types (k80, p100, v100, v100x, a100) with `scripts/test_gpu_compatibility.sh` before re-running failed PDFs.
+**Working GPU types:** K80 (CPU fallback), V100, V100x, A100. **DO NOT use P100.**
+
+**Next step:** Re-run ~122K failed PDFs on working GPU types (exclude P100).
 
 ### Output Structure
 
@@ -101,7 +103,7 @@ minerU_out/{prefix}/{pmid}/auto/
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # Small PDFs (<5MB) - 40 PDFs/chunk, 2hr limit
-# Specify GPU type after testing (k80, p100, v100, v100x, a100)
+# Use V100 for speed, K80 for availability. DO NOT use P100.
 swarm -f /data/adamt/osm/datafiles/mineru_small.swarm \
     -g 64 -t 16 --time 02:00:00 \
     --partition gpu --gres=gpu:k80:1 \
@@ -114,12 +116,18 @@ swarm -f /data/adamt/osm/datafiles/mineru_large.swarm \
     --logdir /data/adamt/osm/datafiles/mineru_logs/large_$TIMESTAMP
 ```
 
-## GPU Requirements
+## GPU Compatibility (Confirmed 2025-01-07)
 
-- **MinerU pipeline backend:** 6GB VRAM minimum
-- **Processing time:** ~3 min/PDF on working GPUs
-- **GPU compatibility:** Test all types before bulk runs - cn23xx nodes show 100% failure (see troubleshooting doc)
-- **Available types:** k80, p100, v100, v100x, a100
+| GPU Type | Works | Mode | Time/PDF |
+|----------|-------|------|----------|
+| K80 | Yes | CPU fallback | ~3.5 min |
+| P100 | **NO** | Silent fail | ~30s |
+| V100 | Yes | GPU | ~1 min |
+| V100x | Yes | GPU | ~1 min |
+| A100 | Yes | GPU | ~51s |
+
+- **P100 is broken:** PyTorch 2.9.1+cu128 requires compute cap 7.0+. P100 (6.0) fails silently.
+- **K80 works via CPU fallback:** Slower but functional.
 - **NIMH QOS:** `--qos=gpunimh2025.1` is optional
 
 ## Monitoring
@@ -138,15 +146,15 @@ jobload -j JOBID
 
 ## Performance Notes
 
-- **Working GPUs (cn30xx, cn4xxx):** ~190-200 sec/PDF (actual processing)
-- **Failing nodes (cn23xx):** 100% silent failure - ~14 sec (container startup only)
-- **Silent failure indicator:** Processing time <50 sec = container startup only, no actual processing
+- **V100/V100x/A100:** ~1 min/PDF (GPU mode)
+- **K80:** ~3.5 min/PDF (CPU fallback mode)
+- **P100:** ~30 sec (silent failure - no output)
+- **Silent failure indicator:** Processing time <50 sec = no actual processing
 - **NIMH QOS:** Separate GPU quota from standard 56-GPU limit
 
 ## Known Issues
 
 See `docs/TROUBLESHOOTING_SILENT_FAILURES.md` for details on:
-- **Preliminary finding:** cn23xx nodes fail silently (100%), cn30xx/cn4xxx work (~0.2% failure)
-- **Next step:** Test all 5 GPU types to verify which work
-- Processing time correlation: <50s = failure, >100s = success
+- **Root cause:** P100 GPUs (compute cap 6.0) silently fail - container needs compute cap 7.0+
+- **Silent failure indicator:** Processing time <50s = failure, >100s = success
 - **Log preservation:** Always use timestamped log directories
