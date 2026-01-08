@@ -33,20 +33,20 @@ Example paths:
 
 See `~/claude/osm/docs/HPC_SOPS.md` for mount setup instructions.
 
-## Current Status (2025-01-06)
+## Current Status (2025-01-07)
 
-### Processing Results (Before Cancellation)
+### Processing Results
 
 | Metric | Value |
 |--------|-------|
 | Result CSVs: "completed" | 253,443 |
 | Actual output directories | 134,688 |
-| Silent failures (no output) | ~172K |
+| Silent failures (no output) | ~122K |
 | Explicit failures (timeout) | 769 |
 
-**Jobs cancelled** to investigate silent failure issue. Job 8644416 has 6 tasks still running.
+**Preliminary finding:** Silent failures strongly correlate with cn23xx nodes (100% failure, 13.7s avg). cn30xx/cn4xxx nodes work correctly (~0.2% failure, 190s avg). Need to verify GPU type mapping. See `docs/TROUBLESHOOTING_SILENT_FAILURES.md`.
 
-**Issue discovered:** MinerU silently fails on ~47% of PDFs without raising exceptions. See `docs/TROUBLESHOOTING_SILENT_FAILURES.md`.
+**Next step:** Test all 5 GPU types (k80, p100, v100, v100x, a100) with `scripts/test_gpu_compatibility.sh` before re-running failed PDFs.
 
 ### Output Structure
 
@@ -94,26 +94,33 @@ minerU_out/{prefix}/{pmid}/auto/
 
 ## HPC Submission
 
+**IMPORTANT:** Use timestamped log directories to preserve logs. Test GPU compatibility before bulk runs.
+
 ```bash
-# Small PDFs (<5MB) - 40 PDFs/chunk, 2hr limit, standard priority
+# Create timestamped log directory
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+# Small PDFs (<5MB) - 40 PDFs/chunk, 2hr limit
+# Specify GPU type after testing (k80, p100, v100, v100x, a100)
 swarm -f /data/adamt/osm/datafiles/mineru_small.swarm \
     -g 64 -t 16 --time 02:00:00 \
-    --partition gpu --gres=gpu:1 \
-    --logdir /data/adamt/osm/datafiles/mineru_logs/small
+    --partition gpu --gres=gpu:k80:1 \
+    --logdir /data/adamt/osm/datafiles/mineru_logs/small_$TIMESTAMP
 
-# Large PDFs (≥5MB) - 20 PDFs/chunk, 4hr limit, NIMH priority
+# Large PDFs (≥5MB) - 20 PDFs/chunk, 4hr limit
 swarm -f /data/adamt/osm/datafiles/mineru_large.swarm \
     -g 64 -t 16 --time 04:00:00 \
-    --partition gpu --gres=gpu:1 \
-    --qos=gpunimh2025.1 \
-    --logdir /data/adamt/osm/datafiles/mineru_logs/large
+    --partition gpu --gres=gpu:k80:1 \
+    --logdir /data/adamt/osm/datafiles/mineru_logs/large_$TIMESTAMP
 ```
 
 ## GPU Requirements
 
-- **MinerU pipeline backend:** 6GB VRAM minimum (K80 12GB works fine)
-- **Processing time:** ~2.5 min/PDF on K80, faster on A100/V100
-- **NIMH QOS:** `--qos=gpunimh2025.1` is optional; K80s have low demand
+- **MinerU pipeline backend:** 6GB VRAM minimum
+- **Processing time:** ~3 min/PDF on working GPUs
+- **GPU compatibility:** Test all types before bulk runs - cn23xx nodes show 100% failure (see troubleshooting doc)
+- **Available types:** k80, p100, v100, v100x, a100
+- **NIMH QOS:** `--qos=gpunimh2025.1` is optional
 
 ## Monitoring
 
@@ -131,15 +138,15 @@ jobload -j JOBID
 
 ## Performance Notes
 
-- **K80:** ~120-160 sec/PDF (actual processing)
-- **P100:** ~60 sec/PDF
-- **A100/V100:** ~12-15 sec/PDF (10x faster than K80)
-- **Silent failure indicator:** Processing time <50 sec suggests no actual processing occurred
+- **Working GPUs (cn30xx, cn4xxx):** ~190-200 sec/PDF (actual processing)
+- **Failing nodes (cn23xx):** 100% silent failure - ~14 sec (container startup only)
+- **Silent failure indicator:** Processing time <50 sec = container startup only, no actual processing
 - **NIMH QOS:** Separate GPU quota from standard 56-GPU limit
 
 ## Known Issues
 
 See `docs/TROUBLESHOOTING_SILENT_FAILURES.md` for details on:
-- MinerU silent failures (~47% of PDFs)
-- Processing time correlation with success
-- Potential GPU-type correlation (to investigate)
+- **Preliminary finding:** cn23xx nodes fail silently (100%), cn30xx/cn4xxx work (~0.2% failure)
+- **Next step:** Test all 5 GPU types to verify which work
+- Processing time correlation: <50s = failure, >100s = success
+- **Log preservation:** Always use timestamped log directories

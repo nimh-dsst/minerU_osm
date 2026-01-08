@@ -63,18 +63,83 @@ Script now removes empty output directories on failure to prevent inode waste.
 **Before:** `{prefix}/{pmid}/{pmid}/auto/`
 **After:** `{prefix}/{pmid}/auto/`
 
-## Root Cause Hypotheses
+## Root Cause: GPU Type Incompatibility (Preliminary Analysis)
 
-### 1. GPU Initialization Failure
+**Analysis Date:** 2025-01-07
 
-MinerU may fail to initialize CUDA/GPU on certain nodes without raising an exception. The 10-46 second processing time matches container startup overhead.
+Initial GPU correlation analysis from available logs (642 chunks with node info) shows significant correlation between node prefix and failure rate.
+
+### GPU Failure Rate Analysis (From Available Logs)
+
+| Node Prefix | GPU Type (TBD) | Chunks | Completed | Actual Output | Silent Fail | Fail Rate | Avg Time |
+|-------------|----------------|--------|-----------|---------------|-------------|-----------|----------|
+| cn23xx | Needs verification | 393 | 10,553 | 0 | 10,553 | **100.0%** | **13.7s** |
+| cn30xx | Needs verification | 141 | 3,667 | 3,658 | 9 | 0.2% | 203.5s |
+| cn41xx | Needs verification | 16 | 458 | 458 | 0 | 0.0% | 190.8s |
+| cn42xx | Needs verification | 37 | 1,062 | 1,060 | 2 | 0.2% | 191.2s |
+| cn44xx | Needs verification | 12 | 228 | 225 | 3 | 1.3% | 38.5s |
+| cn07xx | Needs verification | 5 | 66 | 65 | 1 | 1.5% | 57.2s |
+| cn08xx | Needs verification | 30 | 599 | 595 | 4 | 0.7% | 47.3s |
+
+**Key Findings:**
+- **cn23xx nodes:** 100% failure rate, 13.7s avg time (container startup only)
+- **cn30xx, cn4xxx nodes:** ~0.2% failure rate, 190-200s avg time (actual processing)
+- Processing time <50s is a reliable indicator of silent failure
+
+### Testing Required
+
+**Before making conclusions, test all 5 GPU types available on Biowulf:**
+
+```bash
+# Run GPU compatibility tests (see scripts/test_gpu_compatibility.sh)
+for gpu in k80 p100 v100 v100x a100; do
+    sinteractive --gres=gpu:${gpu}:1 --mem=64g --time=00:30:00
+    # Run test_gpu_compatibility.sh
+done
+```
+
+### Working Hypothesis
+
+MinerU's container may be incompatible with certain GPU architectures. The container was built with specific CUDA libraries that may not support all GPU compute capabilities:
+- K80: compute capability 3.7
+- P100: compute capability 6.0
+- V100/V100x: compute capability 7.0
+- A100: compute capability 8.0
 
 **Evidence:**
-- Chunk 00010 ran on cn2355 (A100 node)
+- cn23xx nodes show 100% failure with fast times (container startup only)
+- cn30xx/cn4xxx nodes show high success with longer times (actual processing)
+- No CUDA errors in stderr (silent failure)
+
+### Recommended Actions
+
+1. **Test all GPU types** before re-running failed PDFs:
+   ```bash
+   bash /data/adamt/osm/minerU_osm/scripts/test_gpu_compatibility.sh
+   ```
+
+2. **After testing, re-run on working GPU types only:**
+   ```bash
+   swarm -f mineru_retry.swarm \
+       --partition gpu --gres=gpu:TYPE:1 \
+       ...
+   ```
+
+3. **If A100 confirmed as problematic:** Consider rebuilding container with CUDA 11.x+ for compute capability 8.0 support.
+
+## Original Root Cause Hypotheses
+
+### 1. GPU Initialization Failure (Likely - Needs Verification)
+
+MinerU fails to initialize CUDA/GPU on certain nodes without raising an exception. The 10-46 second processing time matches container startup overhead.
+
+**Evidence:**
+- Chunk 00010 ran on cn2355 (cn23xx node)
 - All 40 PDFs in that chunk failed with 10-46 sec times
 - No CUDA errors in stderr
+- All cn23xx chunks in available logs have 100% failure rate
 
-**Investigation:** Compare failure rates across GPU types (K80, P100, V100, A100).
+**Status:** Strongly correlated with cn23xx nodes. Need to verify GPU type mapping and test all 5 GPU types (k80, p100, v100, v100x, a100).
 
 ### 2. Model Loading Failure
 
@@ -169,8 +234,9 @@ Create a diagnostic swarm that:
 
 ## Next Steps
 
-1. [ ] Analyze GPU type correlation with failure rate
-2. [ ] Run manual debug test on failing PDF
-3. [ ] Enable MinerU debug logging in wrapper script
-4. [ ] Consider alternative: retry failed PDFs with different backend (vlm vs pipeline)
-5. [ ] Report issue to MinerU GitHub if root cause is in MinerU itself
+1. [x] Analyze GPU type correlation with failure rate - **DONE: cn23xx = 100% failure, cn30xx/cn4xxx = ~0.2% failure**
+2. [ ] **Test all 5 GPU types** (k80, p100, v100, v100x, a100) with test_gpu_compatibility.sh
+3. [ ] Identify which GPU types work and which fail
+4. [ ] Re-run failed PDFs on working GPU types only
+5. [ ] Consider rebuilding container with broader CUDA support if needed
+6. [ ] Report issue to MinerU GitHub with GPU compatibility findings
