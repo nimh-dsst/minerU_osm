@@ -168,17 +168,21 @@ def get_pmid_prefix(pmid: str) -> str:
 def check_existing_output(pmid: str, output_dir: Path) -> bool:
     """Check if output files already exist for a PMID."""
     prefix = get_pmid_prefix(pmid)
-    # Check in correct structure: {prefix}/{pmid}/auto/{pmid}_content_list.json
-    json_path = output_dir / prefix / pmid / "auto" / f"{pmid}_content_list.json"
-    if json_path.exists():
-        return True
-    # Also check old double-nested structure for backwards compatibility
-    old_json_path = output_dir / prefix / pmid / pmid / "auto" / f"{pmid}_content_list.json"
-    if old_json_path.exists():
-        return True
-    # Check non-prefixed structure
-    flat_json_path = output_dir / pmid / "auto" / f"{pmid}_content_list.json"
-    return flat_json_path.exists()
+    # Check both auto/ and hybrid_auto/ (P100 container uses hybrid backend)
+    for subdir in ["auto", "hybrid_auto"]:
+        # Check in correct structure: {prefix}/{pmid}/{subdir}/{pmid}_content_list.json
+        json_path = output_dir / prefix / pmid / subdir / f"{pmid}_content_list.json"
+        if json_path.exists():
+            return True
+        # Also check old double-nested structure for backwards compatibility
+        old_json_path = output_dir / prefix / pmid / pmid / subdir / f"{pmid}_content_list.json"
+        if old_json_path.exists():
+            return True
+        # Check non-prefixed structure
+        flat_json_path = output_dir / pmid / subdir / f"{pmid}_content_list.json"
+        if flat_json_path.exists():
+            return True
+    return False
 
 
 def process_single_pdf(
@@ -260,21 +264,33 @@ def process_single_pdf(
 
         # Verify output files actually exist before marking completed
         # MinerU creates: {prefix}/{pmid}/auto/{pmid}_content_list.json
-        json_path = pmid_output_dir / "auto" / f"{pmid}_content_list.json"
-        md_path = pmid_output_dir / "auto" / f"{pmid}.md"
+        # P100 container uses hybrid backend: {prefix}/{pmid}/hybrid_auto/{pmid}_content_list.json
+        json_path = None
+        output_subdir = None
 
-        # Also check for files with PDF filename (MinerU uses PDF stem)
-        if not json_path.exists():
-            json_files = list((pmid_output_dir / "auto").glob("*_content_list.json")) if (pmid_output_dir / "auto").exists() else []
-            if json_files:
-                json_path = json_files[0]
+        # Check both auto/ and hybrid_auto/ directories
+        for subdir in ["auto", "hybrid_auto"]:
+            candidate_json = pmid_output_dir / subdir / f"{pmid}_content_list.json"
+            if candidate_json.exists():
+                json_path = candidate_json
+                output_subdir = subdir
+                break
+            # Also check for files with PDF filename (MinerU uses PDF stem)
+            subdir_path = pmid_output_dir / subdir
+            if subdir_path.exists():
+                json_files = list(subdir_path.glob("*_content_list.json"))
+                if json_files:
+                    json_path = json_files[0]
+                    output_subdir = subdir
+                    break
 
-        if json_path.exists():
+        if json_path and json_path.exists():
             result["json_path"] = str(json_path)
             result["status"] = "completed"
 
-            # Find markdown file
-            md_files = list((pmid_output_dir / "auto").glob("*.md")) if (pmid_output_dir / "auto").exists() else []
+            # Find markdown file in the same subdir
+            subdir_path = pmid_output_dir / output_subdir
+            md_files = list(subdir_path.glob("*.md")) if subdir_path.exists() else []
             if md_files:
                 result["md_path"] = str(md_files[0])
         else:
