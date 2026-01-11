@@ -76,7 +76,7 @@ Examples:
     parser.add_argument(
         "--registry-db",
         type=Path,
-        default=Path("/data/adamt/osm/datafiles/mineru_registry.duckdb"),
+        default=Path("/data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb"),
         help="Path to registry database",
     )
     parser.add_argument(

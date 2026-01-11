@@ -1,0 +1,60 @@
+# MinerU container with P100 (sm_60) GPU support
+# Uses PyTorch 2.3.1 + CUDA 11.8 which supports compute capability 6.0+
+#
+# Build: docker build -f Dockerfile.p100 -t mineru:p100 .
+# Test:  docker run --gpus all mineru:p100 python3 -c "import torch; print(torch.cuda.get_device_capability())"
+
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+LABEL maintainer="Adam Thomas"
+LABEL description="MinerU PDF-to-JSON container with P100 GPU support"
+LABEL pytorch_version="2.3.1+cu118"
+LABEL cuda_compute_capability="6.0+"
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install base dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    git \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set python3.11 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+# Upgrade pip
+RUN python3 -m pip install --upgrade pip
+
+# Install MinerU first (will pull torch 2.9.x)
+RUN pip3 install --no-cache-dir "mineru[core]"
+
+# FORCE reinstall PyTorch 2.3.1 with CUDA 11.8 (supports sm_60/P100)
+# This overwrites the incompatible torch 2.9.x that mineru pulled in
+RUN pip3 install --no-cache-dir --force-reinstall \
+    torch==2.3.1+cu118 \
+    torchvision==0.18.1+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118
+
+# Install additional dependencies
+RUN pip3 install --no-cache-dir \
+    pandas \
+    pyarrow \
+    duckdb
+
+# Environment
+ENV LC_ALL=C
+ENV LANG=C.UTF-8
+ENV PATH=/usr/local/bin:$PATH
+
+# Default command
+CMD ["mineru", "--help"]

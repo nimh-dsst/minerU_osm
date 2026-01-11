@@ -9,7 +9,10 @@ Tracks the status of PDF processing through MinerU, including:
 - Output file paths
 
 Usage:
-    # Initialize from manifest
+    # Scan directory for new PDFs and add to registry
+    python mineru_registry.py scan-pdfs --pdf-dir /path/to/pdfs
+
+    # Initialize from manifest (alternative to scan-pdfs)
     python mineru_registry.py init --manifest /path/to/manifest.csv
 
     # Check status
@@ -23,6 +26,9 @@ Usage:
 
     # Mark failed PDFs for retry
     python mineru_registry.py retry-failed
+
+    # Scan output directory and mark completed
+    python mineru_registry.py scan-outputs --output-dir /path/to/outputs
 """
 
 import argparse
@@ -38,7 +44,7 @@ except ImportError:
     sys.exit(1)
 
 
-DEFAULT_DB_PATH = Path("/data/adamt/osm/datafiles/mineru_registry.duckdb")
+DEFAULT_DB_PATH = Path("/data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb")
 
 
 def get_db(db_path: Path) -> duckdb.DuckDBPyConnection:
@@ -530,6 +536,131 @@ def cmd_update_sizes(args):
     return 0
 
 
+def cmd_scan_pdfs(args):
+    """Scan a directory for new PDFs and add them to the registry."""
+    import os
+    import re
+
+    db_path = Path(args.db)
+    pdf_dir = Path(args.pdf_dir)
+
+    if not pdf_dir.exists():
+        print(f"Error: PDF directory not found: {pdf_dir}")
+        return 1
+
+    # Create database if it doesn't exist
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = get_db(db_path)
+    init_schema(conn)
+
+    # Get existing PMIDs for fast lookup
+    existing = set(
+        row[0] for row in conn.execute("SELECT pmid FROM mineru_status").fetchall()
+    )
+    print(f"Registry has {len(existing)} existing entries")
+
+    # Scan for PDFs
+    print(f"Scanning for PDFs in: {pdf_dir}")
+
+    # Support both flat and nested directory structures
+    # Pattern: looks for numeric PMID in filename
+    pmid_pattern = re.compile(r"(\d{6,10})\.pdf$", re.IGNORECASE)
+
+    added = 0
+    skipped = 0
+    batch = []
+    batch_size = 10000
+
+    # Use os.walk for efficiency with large directories
+    for root, dirs, files in os.walk(pdf_dir):
+        for filename in files:
+            if not filename.lower().endswith(".pdf"):
+                continue
+
+            # Extract PMID from filename
+            match = pmid_pattern.search(filename)
+            if not match:
+                continue
+
+            pmid = match.group(1)
+
+            # Skip if already exists
+            if pmid in existing:
+                skipped += 1
+                continue
+
+            pdf_path = os.path.join(root, filename)
+
+            # Get file size
+            try:
+                file_size = os.path.getsize(pdf_path)
+            except OSError:
+                file_size = None
+
+            batch.append((pmid, pdf_path, file_size))
+            existing.add(pmid)  # Prevent duplicates within scan
+            added += 1
+
+            # Batch inserts for performance
+            if len(batch) >= batch_size:
+                conn.executemany(
+                    """
+                    INSERT INTO mineru_status (pmid, pdf_path, file_size, status, created_at)
+                    VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+                    ON CONFLICT (pmid) DO NOTHING
+                    """,
+                    batch,
+                )
+                conn.commit()
+                print(f"  Added {added} new PDFs...")
+                batch = []
+
+    # Final batch
+    if batch:
+        conn.executemany(
+            """
+            INSERT INTO mineru_status (pmid, pdf_path, file_size, status, created_at)
+            VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+            ON CONFLICT (pmid) DO NOTHING
+            """,
+            batch,
+        )
+        conn.commit()
+
+    total = conn.execute("SELECT COUNT(*) FROM mineru_status").fetchone()[0]
+
+    print(f"\nScan complete:")
+    print(f"  New PDFs added: {added}")
+    print(f"  Already in registry: {skipped}")
+    print(f"  Total in registry: {total}")
+
+    # Show size distribution if we added files
+    if added > 0 and args.verbose:
+        dist = conn.execute(
+            """
+            SELECT
+                CASE
+                    WHEN file_size < 1048576 THEN '<1MB'
+                    WHEN file_size < 5242880 THEN '1-5MB'
+                    WHEN file_size < 10485760 THEN '5-10MB'
+                    ELSE '>10MB'
+                END as size_range,
+                COUNT(*) as count
+            FROM mineru_status
+            WHERE file_size IS NOT NULL
+            GROUP BY 1
+            ORDER BY MIN(file_size)
+            """
+        ).fetchall()
+
+        print("\nSize distribution:")
+        for range_name, count in dist:
+            print(f"  {range_name}: {count:,}")
+
+    conn.close()
+    return 0
+
+
 def cmd_export_by_size(args):
     """Export PDFs filtered by file size to a manifest."""
     db_path = Path(args.db)
@@ -699,6 +830,22 @@ def main():
         help="Minimum file size in MB",
     )
 
+    # scan-pdfs
+    scan_pdfs_parser = subparsers.add_parser(
+        "scan-pdfs",
+        help="Scan directory for new PDFs and add to registry",
+    )
+    scan_pdfs_parser.add_argument(
+        "--pdf-dir",
+        required=True,
+        help="Directory containing PDF files to scan",
+    )
+    scan_pdfs_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show size distribution after scan",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -713,6 +860,7 @@ def main():
         "export-failed": cmd_export_failed,
         "retry-failed": cmd_retry_failed,
         "scan-outputs": cmd_scan_outputs,
+        "scan-pdfs": cmd_scan_pdfs,
         "query": cmd_query,
         "update-sizes": cmd_update_sizes,
         "export-by-size": cmd_export_by_size,

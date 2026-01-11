@@ -28,27 +28,28 @@ Access HPC filesystems locally via symlinks:
 
 Example paths:
 - `~/helix_mnt_data/osm/minerU_osm/` - This repository on HPC
-- `~/helix_mnt_data/osm/datafiles/` - Registry, manifests, results
+- `~/helix_mnt_nimh_scratch/adamt/osm/datalad-osm/duckdbs/` - Registry database
 - `~/helix_mnt_nimh_scratch/adamt/osm/datalad-osm/` - PDFs and outputs
 
 See `~/claude/osm/docs/HPC_SOPS.md` for mount setup instructions.
 
-## Current Status (2025-01-07)
+## Current Status (2025-01-11)
 
 ### Processing Results
 
-| Metric | Value |
-|--------|-------|
-| Result CSVs: "completed" | 253,443 |
-| Actual output directories | 134,688 |
-| Silent failures (no output) | ~122K |
-| Explicit failures (timeout) | 769 |
+| Status | Count | Percent |
+|--------|-------|---------|
+| Completed | 303,750 | 67.5% |
+| Failed | 2,015 | 0.4% |
+| Pending | 144,210 | 32.0% |
+| **Total** | **449,975** | |
 
-**Root cause (confirmed 2025-01-07):** P100 GPUs silently fail because container's PyTorch 2.9.1+cu128 only supports compute capability 7.0+. P100 (compute cap 6.0) is incompatible. See `docs/TROUBLESHOOTING_SILENT_FAILURES.md`.
+**Active job:** Hybrid backend processing (job 9213073) running on V100/V100x/A100 GPUs.
+- Progress: 746/5000 chunks (15%) after ~12 hours
+- Rate: ~65 chunks/hour
+- ETA: ~2.7 days remaining (~Jan 13)
 
-**Working GPU types:** K80 (CPU fallback), V100, V100x, A100. **DO NOT use P100.**
-
-**Next step:** Re-run ~122K failed PDFs on working GPU types (exclude P100).
+**Backend comparison:** See `docs/GPU_BACKEND_COMPARISON.md` for detailed analysis of pipeline vs vlm vs hybrid backends.
 
 ### Output Structure
 
@@ -64,14 +65,13 @@ minerU_out/{prefix}/{pmid}/auto/
 
 ## Key Files
 
-- **Container:** `/data/adamt/containers/mineru.sif` (6.5 GB)
-- **Registry:** `/data/adamt/osm/datafiles/mineru_registry.duckdb` (450K PDFs with file sizes)
-- **Manifests:**
-  - `mineru_manifest_full.csv` - All 450K PDFs
-  - `mineru_manifest_small.csv` - PDFs <5MB (358K)
-  - `mineru_manifest_large.csv` - PDFs ≥5MB (67K)
-- **Results:** `mineru_results_v2/`, `mineru_results_large/` - Per-chunk CSVs
-- **Logs:** `mineru_logs/{small,large}/`
+- **Containers:**
+  - `mineru_2.7.1.sif` - MinerU 2.7.1, PyTorch 2.9.1 (V100/A100, all backends)
+  - `mineru_p100.sif` - MinerU 2.7.1, PyTorch 2.3.1+cu118 (P100 compatible)
+  - `mineru.sif` - MinerU 2.6.8 (legacy, pipeline only)
+- **Registry:** `/data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb` (450K PDFs with file sizes)
+- **Results:** `mineru_results_v2/`, `mineru_results_hybrid/` - Per-chunk CSVs
+- **Logs:** `mineru_logs/hybrid_*/`
 
 ## Key Scripts
 
@@ -86,12 +86,22 @@ minerU_out/{prefix}/{pmid}/auto/
 ```bash
 # Check status
 /data/adamt/osm/venvHPC/bin/python scripts/mineru_registry.py \
-    --db /data/adamt/osm/datafiles/mineru_registry.duckdb status
+    --db /data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb status
+
+# Scan for new PDFs and add to registry
+/data/adamt/osm/venvHPC/bin/python scripts/mineru_registry.py \
+    --db /data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb \
+    scan-pdfs --pdf-dir /data/NIMH_scratch/adamt/osm/datalad-osm/pdfs
 
 # Export pending
 /data/adamt/osm/venvHPC/bin/python scripts/mineru_registry.py \
-    --db /data/adamt/osm/datafiles/mineru_registry.duckdb \
+    --db /data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb \
     export-pending -o pending.csv
+
+# Update from results
+/data/adamt/osm/venvHPC/bin/python scripts/mineru_registry.py \
+    --db /data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb \
+    update --results /path/to/results.csv
 ```
 
 ## HPC Submission

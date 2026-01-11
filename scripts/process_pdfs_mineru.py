@@ -91,9 +91,8 @@ Examples:
     )
     parser.add_argument(
         "--backend",
-        choices=["pipeline", "vlm", "sglang"],
         default="pipeline",
-        help="MinerU backend (default: pipeline)",
+        help="MinerU backend: pipeline, vlm-auto-engine, hybrid-auto-engine (default: pipeline)",
     )
     parser.add_argument(
         "--results-file",
@@ -247,13 +246,14 @@ def process_single_pdf(
                 "mineru",
                 "-p", str(pdf_path),
                 "-o", str(prefix_dir),  # Pass prefix dir
+                "-b", backend,  # Backend: pipeline, vlm-auto-engine, hybrid-auto-engine
             ]
 
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=600,  # 10 minute timeout
+                timeout=1800,  # 30 minute timeout for hybrid backend
             )
 
             if proc.returncode != 0:

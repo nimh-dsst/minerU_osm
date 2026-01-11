@@ -16,7 +16,7 @@ This document outlines a strategy for processing PubMed Open Access PDFs through
 | Small PDFs (<5MB) | 382,657 |
 | Large PDFs (≥5MB) | 67,318 |
 | Container | Built (6.5 GB) at `/data/adamt/containers/mineru.sif` |
-| Registry | `/data/adamt/osm/datafiles/mineru_registry.duckdb` |
+| Registry | `/data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb` |
 
 ### Processing Results (Before Cancellation)
 
@@ -220,16 +220,16 @@ scp build/mineru.sif helix:/data/adamt/containers/
 ```bash
 # Initialize (already done)
 /data/adamt/osm/venvHPC/bin/python /data/adamt/osm/minerU_osm/scripts/mineru_registry.py \
-    --db /data/adamt/osm/datafiles/mineru_registry.duckdb \
+    --db /data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb \
     init --manifest /data/adamt/osm/datafiles/mineru_manifest_scratch.csv
 
 # Check status
 /data/adamt/osm/venvHPC/bin/python /data/adamt/osm/minerU_osm/scripts/mineru_registry.py \
-    --db /data/adamt/osm/datafiles/mineru_registry.duckdb status
+    --db /data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb status
 
 # Export pending
 /data/adamt/osm/venvHPC/bin/python /data/adamt/osm/minerU_osm/scripts/mineru_registry.py \
-    --db /data/adamt/osm/datafiles/mineru_registry.duckdb \
+    --db /data/NIMH_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb \
     export-pending -o pending.csv
 ```
 
@@ -361,7 +361,7 @@ ln -s "/run/user/$(id -u)/gvfs/smb-share:server=hpcdrive.nih.gov,share=adamt/" ~
 
 # Access files
 ls ~/helix_mnt_data/osm/minerU_osm/
-cat ~/helix_mnt_data/osm/datafiles/mineru_registry.duckdb
+cat ~/helix_mnt_nimh_scratch/adamt/osm/datalad-osm/duckdbs/mineru_registry.duckdb
 ```
 
 See `/home/adamt/claude/osm/docs/HPC_SOPS.md` for full documentation.
