@@ -45,9 +45,10 @@ See `~/claude/osm/docs/HPC_SOPS.md` for mount setup instructions.
 | **Total** | **449,975** | |
 
 **Active job:** Hybrid backend processing (job 9213073) running on V100/V100x/A100 GPUs.
-- Progress: 746/5000 chunks (15%) after ~12 hours
+- Progress: ~800/5000 chunks (16%) after ~12 hours
 - Rate: ~65 chunks/hour
-- ETA: ~2.7 days remaining (~Jan 13)
+- ETA: ~2.5 days remaining (~Jan 13)
+- Success rate: ~99% with 1800s timeout (up from 70% with 600s timeout)
 
 **Backend comparison:** See `docs/GPU_BACKEND_COMPARISON.md` for detailed analysis of pipeline vs vlm vs hybrid backends.
 
